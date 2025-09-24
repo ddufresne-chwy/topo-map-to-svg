@@ -1,0 +1,303 @@
+#!/usr/bin/env python3
+"""
+Topographical map ➜ SVG layer extractor
+
+Given a raster image (photo/scan) of a topographic map (JPG or PNG), this script:
+  1) isolates contour (elevation) lines,
+  2) traces them into vector paths,
+  3) reconstructs the nesting (hierarchy) of the lines to approximate elevation steps,
+  4) outputs clean SVG files grouping lines by peak (disconnected region) and by level (nesting depth).
+
+Output structure (example):
+  out/
+    overview_all_layers.svg            # all traced lines in one SVG
+    layers/
+      level_00.svg                     # every line at depth 0 across all peaks
+      level_01.svg                     # every line at depth 1 across all peaks
+      ...
+    peaks/
+      peak_000/
+        all_levels.svg                 # this peak, all layers
+        level_00.svg                   # only depth 0 for this peak
+        level_01.svg                   # only depth 1 for this peak
+        ...
+
+Notes & assumptions
+-------------------
+• We use contour nesting depth as a proxy for elevation steps. On classical topo maps, each nested ring typically represents a higher (or lower) elevation. Without a legend/DEM we can't assign true elevation numbers, but depth-based grouping is consistent across peaks.
+• Multiple mountain peaks appear as disconnected contour trees; each tree is written to its own folder.
+• The script is robust to typical scanning noise via denoising + morphological closing. For best results, provide an HSV mask for the contour line color when known (e.g., brown lines).
+
+Dependencies
+------------
+  pip install opencv-python numpy svgwrite
+
+Usage
+-----
+  python topo_to_svg.py input.jpg --out out \
+      --min-perimeter 120 --close-k 3 --close-iters 1 \
+      --dp-eps 1.5 --stroke 1.0
+
+You can also use PNG files:
+  python topo_to_svg.py input.png --out out
+
+Optional color mask (recommended if contour lines have a distinct color, e.g., brown):
+  # example HSV range (tweak to your map)
+  python topo_to_svg.py input.png --hsv-low 5 40 40 --hsv-high 25 255 255
+
+If you don’t set --hsv-low/--hsv-high, the script falls back to adaptive thresholding.
+
+"""
+from __future__ import annotations
+import argparse
+import os
+from pathlib import Path
+from collections import defaultdict, deque
+from typing import Dict, List, Tuple
+
+import cv2
+import numpy as np
+import svgwrite
+
+Point = Tuple[float, float]
+
+# -----------------------------
+# Utilities
+# -----------------------------
+
+def ensure_dir(p: Path):
+    p.mkdir(parents=True, exist_ok=True)
+
+
+def approx_poly(points: np.ndarray, eps: float) -> np.ndarray:
+    """Douglas–Peucker polyline simplification on a contour (Nx1x2)."""
+    peri = cv2.arcLength(points, True)
+    epsilon = (eps / 100.0) * peri if eps > 1 else eps
+    approx = cv2.approxPolyDP(points, epsilon, True)
+    return approx
+
+
+def contour_closed(cnt: np.ndarray) -> bool:
+    return True
+
+
+def to_svg(paths: List[List[Point]], size: Tuple[int, int], stroke: float, fn: Path):
+    w, h = size
+    dwg = svgwrite.Drawing(str(fn), size=(w, h))
+    for pts in paths:
+        if len(pts) < 2:
+            continue
+        d = [f"M {pts[0][0]:.2f} {pts[0][1]:.2f}"]
+        for x, y in pts[1:]:
+            d.append(f"L {x:.2f} {y:.2f}")
+        d.append("Z")
+        dwg.add(dwg.path(" ".join(d), fill="none", stroke="black", stroke_width=stroke))
+    dwg.save()
+
+# -----------------------------
+# Core processing
+# -----------------------------
+
+def isolate_lines(img_bgr: np.ndarray,
+                  hsv_low: Tuple[int, int, int] | None,
+                  hsv_high: Tuple[int, int, int] | None,
+                  close_k: int,
+                  close_iters: int) -> np.ndarray:
+    den = cv2.bilateralFilter(img_bgr, d=7, sigmaColor=50, sigmaSpace=50)
+
+    if hsv_low is not None and hsv_high is not None:
+        hsv = cv2.cvtColor(den, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, np.array(hsv_low, dtype=np.uint8), np.array(hsv_high, dtype=np.uint8))
+        bin_img = mask
+    else:
+        gray = cv2.cvtColor(den, cv2.COLOR_BGR2GRAY)
+        bin_img = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                        cv2.THRESH_BINARY_INV, 31, 5)
+        bin_img = cv2.medianBlur(bin_img, 3)
+
+    if close_k > 0 and close_iters > 0:
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (max(1, close_k), max(1, close_k)))
+        bin_img = cv2.morphologyEx(bin_img, cv2.MORPH_CLOSE, k, iterations=close_iters)
+
+    return bin_img
+
+
+def find_contour_forest(bin_img: np.ndarray,
+                        min_perimeter: float,
+                        dp_eps: float) -> Tuple[List[np.ndarray], np.ndarray]:
+    contours, hierarchy = cv2.findContours(bin_img, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+    if hierarchy is None:
+        return [], np.zeros((0, 4), dtype=np.int32)
+
+    simp = []
+    keep_idx = []
+    for i, cnt in enumerate(contours):
+        peri = cv2.arcLength(cnt, True)
+        if peri < min_perimeter:
+            continue
+        if not contour_closed(cnt):
+            continue
+        if dp_eps > 0:
+            cnt = approx_poly(cnt, dp_eps)
+        simp.append(cnt)
+        keep_idx.append(i)
+
+    if not keep_idx:
+        return [], np.zeros((0, 4), dtype=np.int32)
+
+    hierarchy = hierarchy[0][keep_idx]
+    return simp, hierarchy
+
+
+def build_trees(contours: List[np.ndarray], hierarchy: np.ndarray) -> Dict[int, Dict]:
+    n = len(contours)
+    bboxes = [cv2.boundingRect(c) for c in contours]
+    areas = [cv2.contourArea(c) for c in contours]
+    recomputed_parent = [-1] * n
+    for i in range(n):
+        x, y, w, h = bboxes[i]
+        bx0, by0, bx1, by1 = x, y, x + w, y + h
+        best_parent = -1
+        best_area = float('inf')
+        for j in range(n):
+            if i == j:
+                continue
+            x2, y2, w2, h2 = bboxes[j]
+            if x2 <= bx0 and y2 <= by0 and x2 + w2 >= bx1 and y2 + h2 >= by1:
+                a = areas[j]
+                if a < best_area:
+                    best_area = a
+                    best_parent = j
+        recomputed_parent[i] = best_parent
+
+    children = [[] for _ in range(n)]
+    roots = []
+    for i, p in enumerate(recomputed_parent):
+        if p == -1:
+            roots.append(i)
+        else:
+            children[p].append(i)
+
+    trees: Dict[int, Dict] = {}
+    for t_id, r in enumerate(roots):
+        q = deque([(r, 0)])
+        nodes = []
+        depths = defaultdict(list)
+        while q:
+            idx, d = q.popleft()
+            nodes.append(idx)
+            depths[d].append(idx)
+            for ch in children[idx]:
+                q.append((ch, d + 1))
+        trees[t_id] = {
+            'root': r,
+            'nodes': nodes,
+            'depths': depths,
+            'children': children,
+        }
+    return trees
+
+
+def contour_to_points(cnt: np.ndarray) -> List[Point]:
+    pts = cnt.reshape(-1, 2)
+    return [(float(x), float(y)) for (x, y) in pts]
+
+# -----------------------------
+# Orchestration
+# -----------------------------
+
+def process(in_path: Path,
+            out_dir: Path,
+            hsv_low: Tuple[int, int, int] | None,
+            hsv_high: Tuple[int, int, int] | None,
+            min_perimeter: float,
+            close_k: int,
+            close_iters: int,
+            dp_eps: float,
+            stroke: float):
+
+    img = cv2.imread(str(in_path), cv2.IMREAD_COLOR)
+    if img is None:
+        raise FileNotFoundError(f"Could not read image: {in_path}")
+
+    h, w = img.shape[:2]
+    ensure_dir(out_dir)
+    ensure_dir(out_dir / 'layers')
+    ensure_dir(out_dir / 'peaks')
+
+    bin_img = isolate_lines(img, hsv_low, hsv_high, close_k, close_iters)
+
+    contours, hierarchy = find_contour_forest(bin_img, min_perimeter=min_perimeter, dp_eps=dp_eps)
+    if len(contours) == 0:
+        print("No contours found above min_perimeter. Try lowering --min-perimeter or adjusting the mask.")
+        return
+
+    trees = build_trees(contours, hierarchy)
+
+    global_levels: Dict[int, List[List[Point]]] = defaultdict(list)
+
+    for t_id, tree in trees.items():
+        peak_dir = out_dir / 'peaks' / f'peak_{t_id:03d}'
+        ensure_dir(peak_dir)
+        level_paths: Dict[int, List[List[Point]]] = defaultdict(list)
+
+        for depth, idxs in tree['depths'].items():
+            for idx in idxs:
+                pts = contour_to_points(contours[idx])
+                level_paths[depth].append(pts)
+                global_levels[depth].append(pts)
+
+        for depth, paths in sorted(level_paths.items()):
+            to_svg(paths, (w, h), stroke, peak_dir / f'level_{depth:02d}.svg')
+
+        all_paths = [p for ps in level_paths.values() for p in ps]
+        to_svg(all_paths, (w, h), stroke, peak_dir / 'all_levels.svg')
+
+    for depth, paths in sorted(global_levels.items()):
+        to_svg(paths, (w, h), stroke, out_dir / 'layers' / f'level_{depth:02d}.svg')
+
+    overview = [p for ps in global_levels.values() for p in ps]
+    to_svg(overview, (w, h), stroke, out_dir / 'overview_all_layers.svg')
+
+    print(f"✅ Done. Peaks: {len(trees)} | Levels found: {len(global_levels)}")
+    print(f"Output directory: {out_dir}")
+
+# -----------------------------
+# CLI
+# -----------------------------
+
+def parse_args():
+    ap = argparse.ArgumentParser(description="Convert a topo map image into per-elevation-layer SVGs.")
+    ap.add_argument('input', type=Path, help='Input image (png/jpg/tif)')
+    ap.add_argument('--out', type=Path, default=Path('out'), help='Output directory')
+
+    ap.add_argument('--hsv-low', type=int, nargs=3, metavar=('H', 'S', 'V'), help='Lower HSV bound for contour color mask')
+    ap.add_argument('--hsv-high', type=int, nargs=3, metavar=('H', 'S', 'V'), help='Upper HSV bound for contour color mask')
+
+    ap.add_argument('--close-k', type=int, default=3, help='Structuring element size for closing (pixels)')
+    ap.add_argument('--close-iters', type=int, default=1, help='Iterations for morphological closing')
+
+    ap.add_argument('--min-perimeter', type=float, default=100.0, help='Ignore tiny contours below this perimeter (pixels)')
+    ap.add_argument('--dp-eps', type=float, default=1.5, help='Douglas–Peucker epsilon. If >1, treated as % of perimeter; if <=1, absolute pixels.')
+
+    ap.add_argument('--stroke', type=float, default=1.0, help='SVG stroke width (px)')
+
+    return ap.parse_args()
+
+if __name__ == '__main__':
+    args = parse_args()
+
+    hsv_low = tuple(args.hsv_low) if args.hsv_low else None
+    hsv_high = tuple(args.hsv_high) if args.hsv_high else None
+
+    process(
+        in_path=args.input,
+        out_dir=args.out,
+        hsv_low=hsv_low,
+        hsv_high=hsv_high,
+        min_perimeter=args.min_perimeter,
+        close_k=args.close_k,
+        close_iters=args.close_iters,
+        dp_eps=args.dp_eps,
+        stroke=args.stroke,
+    )
