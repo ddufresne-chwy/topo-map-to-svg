@@ -2,15 +2,20 @@
 """
 Topographical map ➜ SVG layer extractor
 
-Given a raster image (photo/scan) of a topographic map (JPG or PNG), this script:
+Given a raster image (photo/scan) of a topographic map (JPG/PNG/TIF), this script:
   1) isolates contour (elevation) lines,
   2) traces them into vector paths,
   3) reconstructs the nesting (hierarchy) of the lines to approximate elevation steps,
-  4) outputs clean SVG files grouping lines by peak (disconnected region) and by level (nesting depth).
+  4) outputs clean SVG files grouping lines by peak (disconnected region) and by level (nesting depth),
+  5) **NEW:** saves **each closed-loop contour** as its **own SVG file**.
 
 Output structure (example):
   out/
     overview_all_layers.svg            # all traced lines in one SVG
+    contours/                          # NEW: one SVG per discovered loop
+      contour_00000.svg
+      contour_00001.svg
+      ...
     layers/
       level_00.svg                     # every line at depth 0 across all peaks
       level_01.svg                     # every line at depth 1 across all peaks
@@ -50,7 +55,6 @@ If you don’t set --hsv-low/--hsv-high, the script falls back to adaptive thres
 """
 from __future__ import annotations
 import argparse
-import os
 from pathlib import Path
 from collections import defaultdict, deque
 from typing import Dict, List, Tuple
@@ -77,7 +81,8 @@ def approx_poly(points: np.ndarray, eps: float) -> np.ndarray:
     return approx
 
 
-def contour_closed(cnt: np.ndarray) -> bool:
+def contour_closed(_: np.ndarray) -> bool:
+    # OpenCV findContours returns closed rings for RETR_* modes
     return True
 
 
@@ -90,9 +95,13 @@ def to_svg(paths: List[List[Point]], size: Tuple[int, int], stroke: float, fn: P
         d = [f"M {pts[0][0]:.2f} {pts[0][1]:.2f}"]
         for x, y in pts[1:]:
             d.append(f"L {x:.2f} {y:.2f}")
-        d.append("Z")
+        d.append("Z")  # closed loop
         dwg.add(dwg.path(" ".join(d), fill="none", stroke="black", stroke_width=stroke))
     dwg.save()
+
+
+def to_svg_single(path_pts: List[Point], size: Tuple[int, int], stroke: float, fn: Path):
+    to_svg([path_pts], size, stroke, fn)
 
 # -----------------------------
 # Core processing
@@ -103,6 +112,7 @@ def isolate_lines(img_bgr: np.ndarray,
                   hsv_high: Tuple[int, int, int] | None,
                   close_k: int,
                   close_iters: int) -> np.ndarray:
+    """Return a binary image (uint8 0/255) with elevation lines highlighted."""
     den = cv2.bilateralFilter(img_bgr, d=7, sigmaColor=50, sigmaSpace=50)
 
     if hsv_low is not None and hsv_high is not None:
@@ -124,13 +134,14 @@ def isolate_lines(img_bgr: np.ndarray,
 
 def find_contour_forest(bin_img: np.ndarray,
                         min_perimeter: float,
-                        dp_eps: float) -> Tuple[List[np.ndarray], np.ndarray]:
+                        dp_eps: float) -> Tuple[List[np.ndarray], np.ndarray, List[int]]:
+    """Find contours and return simplified contours, hierarchy, and original indices kept."""
     contours, hierarchy = cv2.findContours(bin_img, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
     if hierarchy is None:
-        return [], np.zeros((0, 4), dtype=np.int32)
+        return [], np.zeros((0, 4), dtype=np.int32), []
 
-    simp = []
-    keep_idx = []
+    simp: List[np.ndarray] = []
+    keep_idx: List[int] = []
     for i, cnt in enumerate(contours):
         peri = cv2.arcLength(cnt, True)
         if peri < min_perimeter:
@@ -143,13 +154,14 @@ def find_contour_forest(bin_img: np.ndarray,
         keep_idx.append(i)
 
     if not keep_idx:
-        return [], np.zeros((0, 4), dtype=np.int32)
+        return [], np.zeros((0, 4), dtype=np.int32), []
 
     hierarchy = hierarchy[0][keep_idx]
-    return simp, hierarchy
+    return simp, hierarchy, keep_idx
 
 
 def build_trees(contours: List[np.ndarray], hierarchy: np.ndarray) -> Dict[int, Dict]:
+    """Group contours into trees by geometric containment (bbox). Returns tree_id -> data."""
     n = len(contours)
     bboxes = [cv2.boundingRect(c) for c in contours]
     areas = [cv2.contourArea(c) for c in contours]
@@ -224,18 +236,26 @@ def process(in_path: Path,
     ensure_dir(out_dir)
     ensure_dir(out_dir / 'layers')
     ensure_dir(out_dir / 'peaks')
+    ensure_dir(out_dir / 'contours')  # NEW: per-loop outputs
 
     bin_img = isolate_lines(img, hsv_low, hsv_high, close_k, close_iters)
 
-    contours, hierarchy = find_contour_forest(bin_img, min_perimeter=min_perimeter, dp_eps=dp_eps)
+    contours, hierarchy, kept = find_contour_forest(bin_img, min_perimeter=min_perimeter, dp_eps=dp_eps)
     if len(contours) == 0:
         print("No contours found above min_perimeter. Try lowering --min-perimeter or adjusting the mask.")
         return
 
     trees = build_trees(contours, hierarchy)
 
+    # Save one SVG per discovered loop (global index order)
+    for i, cnt in enumerate(contours):
+        pts = contour_to_points(cnt)
+        to_svg_single(pts, (w, h), stroke, out_dir / 'contours' / f'contour_{i:05d}.svg')
+
+    # Collect global per-level paths
     global_levels: Dict[int, List[List[Point]]] = defaultdict(list)
 
+    # Write per-peak and per-level as before
     for t_id, tree in trees.items():
         peak_dir = out_dir / 'peaks' / f'peak_{t_id:03d}'
         ensure_dir(peak_dir)
@@ -259,7 +279,7 @@ def process(in_path: Path,
     overview = [p for ps in global_levels.values() for p in ps]
     to_svg(overview, (w, h), stroke, out_dir / 'overview_all_layers.svg')
 
-    print(f"✅ Done. Peaks: {len(trees)} | Levels found: {len(global_levels)}")
+    print(f"✅ Done. Contours saved: {len(contours)} | Peaks: {len(trees)} | Levels found: {len(global_levels)}")
     print(f"Output directory: {out_dir}")
 
 # -----------------------------
