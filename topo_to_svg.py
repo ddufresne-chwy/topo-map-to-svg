@@ -9,9 +9,10 @@ Given a raster image (photo/scan) of a topographic map (JPG/PNG/TIF), this scrip
   4) outputs clean SVG files grouping lines by peak (disconnected region) and by level (nesting depth),
   5) saves **each closed-loop contour** as its **own SVG file**.
 
-New Feature
+New Features
 -----------
-• Added `--thin` option: when enabled, all SVG contours are drawn with a fixed stroke width of **1 pixel**, regardless of `--stroke`.
+• `--thin`: draw all stroked SVG contours at a fixed **1px** width, regardless of `--stroke`.
+• `--single-line`: **skeletonize** the raster lines to 1‑pixel centerlines before tracing. This yields a **single path per contour** (no inner/outer pair). Use together with `--thin` for clean hairline loops.
 
 Output structure (example):
   out/
@@ -91,6 +92,24 @@ def to_svg(paths: List[List[Point]], size: Tuple[int, int], stroke: float, fn: P
 
 def to_svg_single(path_pts: List[Point], size: Tuple[int, int], stroke: float, fn: Path, thin: bool):
     to_svg([path_pts], size, stroke, fn, thin)
+
+# Skeletonization (OpenCV morphological skeleton)
+# Input: binary image with lines as 255, background 0
+# Output: 1-pixel wide skeleton (uint8 0/255)
+
+def skeletonize_cv(bin_img: np.ndarray) -> np.ndarray:
+    img = (bin_img > 0).astype(np.uint8) * 255
+    skel = np.zeros_like(img)
+    element = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
+    while True:
+        eroded = cv2.erode(img, element)
+        opened = cv2.morphologyEx(eroded, cv2.MORPH_OPEN, element)
+        temp = cv2.subtract(eroded, opened)
+        skel = cv2.bitwise_or(skel, temp)
+        img = eroded
+        if cv2.countNonZero(img) == 0:
+            break
+    return skel
 
 # -----------------------------
 # Core processing
@@ -213,7 +232,8 @@ def process(in_path: Path,
             close_iters: int,
             dp_eps: float,
             stroke: float,
-            thin: bool):
+            thin: bool,
+            single_line: bool):
 
     img = cv2.imread(str(in_path), cv2.IMREAD_COLOR)
     if img is None:
@@ -225,7 +245,11 @@ def process(in_path: Path,
     ensure_dir(out_dir / 'peaks')
     ensure_dir(out_dir / 'contours')
 
-    bin_img = isolate_lines(img, hsv_low, hsv_high, close_k, close_iters)
+        bin_img = isolate_lines(img, hsv_low, hsv_high, close_k, close_iters)
+
+    # Optional: thin to 1-pixel centerlines so each contour traces as a single path
+    if single_line:
+        bin_img = skeletonize_cv(bin_img)
 
     contours, hierarchy, kept = find_contour_forest(bin_img, min_perimeter=min_perimeter, dp_eps=dp_eps)
     if len(contours) == 0:
@@ -286,6 +310,9 @@ def parse_args():
 
     ap.add_argument('--stroke', type=float, default=1.0, help='SVG stroke width (px)')
     ap.add_argument('--thin', action='store_true', help='Force all SVG contours to be exactly 1px wide')
+    ap.add_argument('--single-line', action='store_true', help='Skeletonize raster lines to 1‑pixel centerlines (one path per contour)')
+
+    return ap.parse_args()
 
     return ap.parse_args()
 
@@ -306,4 +333,5 @@ if __name__ == '__main__':
         dp_eps=args.dp_eps,
         stroke=args.stroke,
         thin=args.thin,
+        single_line=args.single_line,
     )
