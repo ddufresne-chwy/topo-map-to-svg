@@ -290,7 +290,7 @@ def process(in_path: Path,
     ensure_dir(out_dir / 'peaks')
     ensure_dir(out_dir / 'contours')
 
-        bin_img = isolate_lines(img, hsv_low, hsv_high, close_k, close_iters)
+    bin_img = isolate_lines(img, hsv_low, hsv_high, close_k, close_iters)
 
     # Optional: thin to 1-pixel centerlines so each contour traces as a single path
     if single_line:
