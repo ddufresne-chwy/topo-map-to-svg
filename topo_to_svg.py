@@ -93,11 +93,31 @@ def to_svg(paths: List[List[Point]], size: Tuple[int, int], stroke: float, fn: P
 def to_svg_single(path_pts: List[Point], size: Tuple[int, int], stroke: float, fn: Path, thin: bool):
     to_svg([path_pts], size, stroke, fn, thin)
 
-# Skeletonization (OpenCV morphological skeleton)
-# Input: binary image with lines as 255, background 0
-# Output: 1-pixel wide skeleton (uint8 0/255)
+# Skeletonization helpers
+# Prefer robust thinning (ximgproc Zhang-Suen or Guo-Hall). Fallbacks to scikit-image or
+# a morphological skeleton if nothing else is available.
+
+def skeletonize_ximgproc(bin_img: np.ndarray, method: str = "zhang") -> np.ndarray:
+    try:
+        import cv2.ximgproc as xip
+    except Exception:
+        return None  # handled by caller
+    t = xip.THINNING_ZHANGSUEN if method == "zhang" else xip.THINNING_GUOHALL
+    skel = xip.thinning(bin_img, thinningType=t)
+    return skel
+
+
+def skeletonize_skimage(bin_img: np.ndarray) -> np.ndarray:
+    try:
+        from skimage.morphology import skeletonize
+    except Exception:
+        return None
+    skel = skeletonize((bin_img > 0)).astype(np.uint8) * 255
+    return skel
+
 
 def skeletonize_cv(bin_img: np.ndarray) -> np.ndarray:
+    # Morphological skeleton (fallback). May produce gaps; kept for compatibility.
     img = (bin_img > 0).astype(np.uint8) * 255
     skel = np.zeros_like(img)
     element = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
@@ -110,6 +130,29 @@ def skeletonize_cv(bin_img: np.ndarray) -> np.ndarray:
         if cv2.countNonZero(img) == 0:
             break
     return skel
+
+
+def skeletonize_image(bin_img: np.ndarray, method: str = "auto", dilate_iters: int = 1) -> np.ndarray:
+    # Pre-bridge tiny gaps before thinning
+    if dilate_iters > 0:
+        k = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        bin_img = cv2.dilate(bin_img, k, iterations=dilate_iters)
+
+    # Prefer ximgproc if available
+    if method in ("auto", "ximgproc", "zhang", "guohall"):
+        m = "zhang" if method in ("auto", "ximgproc", "zhang") else "guohall"
+        skel = skeletonize_ximgproc(bin_img, m)
+        if skel is not None:
+            return skel
+
+    # Try scikit-image
+    if method in ("auto", "skimage"):
+        skel = skeletonize_skimage(bin_img)
+        if skel is not None:
+            return skel
+
+    # Fallback to morphological skeleton
+    return skeletonize_cv(bin_img)
 
 # -----------------------------
 # Core processing
@@ -233,7 +276,9 @@ def process(in_path: Path,
             dp_eps: float,
             stroke: float,
             thin: bool,
-            single_line: bool):
+            single_line: bool,
+            single_line_method: str,
+            single_line_dilate: int):
 
     img = cv2.imread(str(in_path), cv2.IMREAD_COLOR)
     if img is None:
@@ -249,7 +294,7 @@ def process(in_path: Path,
 
     # Optional: thin to 1-pixel centerlines so each contour traces as a single path
     if single_line:
-        bin_img = skeletonize_cv(bin_img)
+        bin_img = skeletonize_image(bin_img, method=single_line_method, dilate_iters=single_line_dilate)
 
     contours, hierarchy, kept = find_contour_forest(bin_img, min_perimeter=min_perimeter, dp_eps=dp_eps)
     if len(contours) == 0:
@@ -311,6 +356,8 @@ def parse_args():
     ap.add_argument('--stroke', type=float, default=1.0, help='SVG stroke width (px)')
     ap.add_argument('--thin', action='store_true', help='Force all SVG contours to be exactly 1px wide')
     ap.add_argument('--single-line', action='store_true', help='Skeletonize raster lines to 1‑pixel centerlines (one path per contour)')
+    ap.add_argument('--single-line-method', choices=['auto','ximgproc','zhang','guohall','skimage','cv'], default='auto', help='Algorithm for single-line skeletonization')
+    ap.add_argument('--single-line-dilate', type=int, default=1, help='3x3 dilation iterations before skeletonizing (bridges tiny gaps)')')
 
     return ap.parse_args()
 
@@ -334,4 +381,6 @@ if __name__ == '__main__':
         stroke=args.stroke,
         thin=args.thin,
         single_line=args.single_line,
+        single_line_method=args.single_line_method,
+        single_line_dilate=args.single_line_dilate,
     )

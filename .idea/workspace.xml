@@ -4,7 +4,10 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="33abd8ff-b1bb-4572-837f-0963215db1c5" name="Changes" comment="feature to force contour line width to 1 pixel" />
+    <list default="true" id="33abd8ff-b1bb-4572-837f-0963215db1c5" name="Changes" comment="added option to force countours with inner and outer walls to single center wall in SVG">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/topo_to_svg.py" beforeDir="false" afterPath="$PROJECT_DIR$/topo_to_svg.py" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -76,13 +79,22 @@
       <option name="project" value="LOCAL" />
       <updated>1759011307569</updated>
     </task>
-    <option name="localTasksCounter" value="5" />
+    <task id="LOCAL-00005" summary="added option to force countours with inner and outer walls to single center wall in SVG">
+      <option name="closed" value="true" />
+      <created>1759092149773</created>
+      <option name="number" value="00005" />
+      <option name="presentableId" value="LOCAL-00005" />
+      <option name="project" value="LOCAL" />
+      <updated>1759092149773</updated>
+    </task>
+    <option name="localTasksCounter" value="6" />
     <servers />
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="initial commit" />
     <MESSAGE value="v3" />
     <MESSAGE value="feature to force contour line width to 1 pixel" />
-    <option name="LAST_COMMIT_MESSAGE" value="feature to force contour line width to 1 pixel" />
+    <MESSAGE value="added option to force countours with inner and outer walls to single center wall in SVG" />
+    <option name="LAST_COMMIT_MESSAGE" value="added option to force countours with inner and outer walls to single center wall in SVG" />
   </component>
 </project>
