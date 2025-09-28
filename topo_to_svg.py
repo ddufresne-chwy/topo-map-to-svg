@@ -357,7 +357,7 @@ def parse_args():
     ap.add_argument('--thin', action='store_true', help='Force all SVG contours to be exactly 1px wide')
     ap.add_argument('--single-line', action='store_true', help='Skeletonize raster lines to 1‑pixel centerlines (one path per contour)')
     ap.add_argument('--single-line-method', choices=['auto','ximgproc','zhang','guohall','skimage','cv'], default='auto', help='Algorithm for single-line skeletonization')
-    ap.add_argument('--single-line-dilate', type=int, default=1, help='3x3 dilation iterations before skeletonizing (bridges tiny gaps)')')
+    ap.add_argument('--single-line-dilate', type=int, default=1, help='3x3 dilation iterations before skeletonizing (bridges tiny gaps)')
 
     return ap.parse_args()
 
