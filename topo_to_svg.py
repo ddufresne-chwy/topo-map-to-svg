@@ -154,6 +154,41 @@ def skeletonize_image(bin_img: np.ndarray, method: str = "auto", dilate_iters: i
     # Fallback to morphological skeleton
     return skeletonize_cv(bin_img)
 
+
+def bridge_skeleton(skel: np.ndarray, max_dist: int) -> np.ndarray:
+    """Connect nearby skeleton endpoints by drawing straight lines if they are within max_dist pixels."""
+    if max_dist <= 0:
+        return skel
+    img = skel.copy()
+    # find endpoints: pixels with exactly 1 neighbor in 8-connectivity
+    kernel = np.ones((3,3), np.uint8)
+    # count neighbors by convolving (we exclude the center by subtracting self)
+    neighbors = cv2.filter2D((img>0).astype(np.uint8), -1, kernel)
+    # neighbors includes the center itself, so endpoints have value 2 (1 neighbor + self)
+    endpoints = np.argwhere(((img>0) & (neighbors==2)))
+    if len(endpoints) == 0:
+        return img
+    used = set()
+    for i, (y1, x1) in enumerate(endpoints):
+        if i in used:
+            continue
+        # search nearest other endpoint within max_dist
+        best_j, best_d2 = -1, max_dist*max_dist
+        for j in range(i+1, len(endpoints)):
+            if j in used:
+                continue
+            y2, x2 = endpoints[j]
+            dy, dx = y2-y1, x2-x1
+            d2 = dy*dy + dx*dx
+            if d2 <= best_d2:
+                best_d2 = d2
+                best_j = j
+        if best_j >= 0:
+            y2, x2 = endpoints[best_j]
+            cv2.line(img, (x1, y1), (x2, y2), 255, 1)
+            used.add(i); used.add(best_j)
+    return img
+
 # -----------------------------
 # Core processing
 # -----------------------------
@@ -278,7 +313,8 @@ def process(in_path: Path,
             thin: bool,
             single_line: bool,
             single_line_method: str,
-            single_line_dilate: int):
+            single_line_dilate: int,
+            single_line_bridge: int):
 
     img = cv2.imread(str(in_path), cv2.IMREAD_COLOR)
     if img is None:
@@ -290,11 +326,13 @@ def process(in_path: Path,
     ensure_dir(out_dir / 'peaks')
     ensure_dir(out_dir / 'contours')
 
-    bin_img = isolate_lines(img, hsv_low, hsv_high, close_k, close_iters)
+        bin_img = isolate_lines(img, hsv_low, hsv_high, close_k, close_iters)
 
     # Optional: thin to 1-pixel centerlines so each contour traces as a single path
     if single_line:
         bin_img = skeletonize_image(bin_img, method=single_line_method, dilate_iters=single_line_dilate)
+        # Bridge nearby endpoints to avoid small breaks in contours
+        bin_img = bridge_skeleton(bin_img, max_dist=single_line_bridge)
 
     contours, hierarchy, kept = find_contour_forest(bin_img, min_perimeter=min_perimeter, dp_eps=dp_eps)
     if len(contours) == 0:
@@ -358,6 +396,7 @@ def parse_args():
     ap.add_argument('--single-line', action='store_true', help='Skeletonize raster lines to 1‑pixel centerlines (one path per contour)')
     ap.add_argument('--single-line-method', choices=['auto','ximgproc','zhang','guohall','skimage','cv'], default='auto', help='Algorithm for single-line skeletonization')
     ap.add_argument('--single-line-dilate', type=int, default=1, help='3x3 dilation iterations before skeletonizing (bridges tiny gaps)')
+    ap.add_argument('--single-line-bridge', type=int, default=0, help='Connect skeleton endpoints within this many pixels (0 = off)')')')
 
     return ap.parse_args()
 
@@ -383,4 +422,5 @@ if __name__ == '__main__':
         single_line=args.single_line,
         single_line_method=args.single_line_method,
         single_line_dilate=args.single_line_dilate,
+        single_line_bridge=args.single_line_bridge,
     )
