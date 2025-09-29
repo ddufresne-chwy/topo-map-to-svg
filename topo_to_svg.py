@@ -75,9 +75,27 @@ def contour_closed(_: np.ndarray) -> bool:
     return True
 
 
-def to_svg(paths: List[List[Point]], size: Tuple[int, int], stroke: float, fn: Path, thin: bool):
+def to_svg(paths: List[List[Point]], size: Tuple[int, int], stroke: float, fn: Path, thin: bool, fill_lines: bool = False):
     w, h = size
     dwg = svgwrite.Drawing(str(fn), size=(w, h))
+    if fill_lines:
+        # Build a single compound path with even-odd fill so nested rings render as bands
+        d_parts = []
+        for pts in paths:
+            if len(pts) < 2:
+                continue
+            d = [f"M {pts[0][0]:.2f} {pts[0][1]:.2f}"]
+            for x, y in pts[1:]:
+                d.append(f"L {x:.2f} {y:.2f}")
+            d.append("Z")
+            d_parts.append(" ".join(d))
+        if d_parts:
+            p = dwg.path(" ".join(d_parts))
+            p.update({"fill": "black", "stroke": "none", "fill-rule": "evenodd"})
+            dwg.add(p)
+        dwg.save()
+        return
+    # Default stroked output
     stroke_width = 1.0 if thin else stroke
     for pts in paths:
         if len(pts) < 2:
@@ -90,8 +108,9 @@ def to_svg(paths: List[List[Point]], size: Tuple[int, int], stroke: float, fn: P
     dwg.save()
 
 
-def to_svg_single(path_pts: List[Point], size: Tuple[int, int], stroke: float, fn: Path, thin: bool):
-    to_svg([path_pts], size, stroke, fn, thin)
+def to_svg_single(path_pts: List[Point], size: Tuple[int, int], stroke: float, fn: Path, thin: bool, fill_lines: bool = False, fill_lines):
+    to_svg([path_pts], size, stroke, fn, thin, fill_lines):
+    to_svg([path_pts], size, stroke, fn, thin, fill_lines)
 
 # Skeletonization helpers
 # Prefer robust thinning (ximgproc Zhang-Suen or Guo-Hall). Fallbacks to scikit-image or
@@ -346,6 +365,10 @@ def process(in_path: Path,
             single_line_bridge: int,
             norm_width_mode: str,
             norm_width_target: int,
+            norm_width_percentile: float,
+            fill_lines: bool):
+            norm_width_mode: str,
+            norm_width_target: int,
             norm_width_percentile: float):
 
     img = cv2.imread(str(in_path), cv2.IMREAD_COLOR)
@@ -358,7 +381,7 @@ def process(in_path: Path,
     ensure_dir(out_dir / 'peaks')
     ensure_dir(out_dir / 'contours')
 
-    bin_img = isolate_lines(img, hsv_low, hsv_high, close_k, close_iters)
+        bin_img = isolate_lines(img, hsv_low, hsv_high, close_k, close_iters)
 
     # Optional: thin to 1-pixel centerlines so each contour traces as a single path
     if single_line:
@@ -375,6 +398,7 @@ def process(in_path: Path,
         # Final skeleton
         bin_img = skeletonize_image(bin_img, method=single_line_method, dilate_iters=0)
         # Bridge nearby endpoints to avoid small breaks in contours
+        bin_img = bridge_skeleton(bin_img, max_dist=single_line_bridge) to avoid small breaks in contours
         bin_img = bridge_skeleton(bin_img, max_dist=single_line_bridge)
 
     contours, hierarchy, kept = find_contour_forest(bin_img, min_perimeter=min_perimeter, dp_eps=dp_eps)
@@ -386,7 +410,7 @@ def process(in_path: Path,
 
     for i, cnt in enumerate(contours):
         pts = contour_to_points(cnt)
-        to_svg_single(pts, (w, h), stroke, out_dir / 'contours' / f'contour_{i:05d}.svg', thin)
+        to_svg_single(pts, (w, h, fill_lines), stroke, out_dir / 'contours' / f'contour_{i:05d}.svg', thin)
 
     global_levels: Dict[int, List[List[Point]]] = defaultdict(list)
 
@@ -441,12 +465,13 @@ def parse_args():
     ap.add_argument('--single-line-dilate', type=int, default=1, help='3x3 dilation iterations before skeletonizing (bridges tiny gaps)')
     ap.add_argument('--single-line-bridge', type=int, default=0, help='Connect skeleton endpoints within this many pixels (0 = off)')
 
-    # NEW: pre-normalize thickness before thinning
     ap.add_argument('--normalize-width', choices=['none','thickest','thinnest','average'], default='none', help='Normalize raster line thickness before thinning')
     ap.add_argument('--normalize-target', type=int, default=0, help='Override target half-width (in px) for normalization (0 = auto)')
     ap.add_argument('--normalize-percentile', type=float, default=95.0, help='Percentile for thickest/thinnest selection (e.g., 95 or 5)')
 
-    return ap.parse_args()
+    ap.add_argument('--fill-lines', action='store_true', help='Render filled bands with even-odd fill (no stroked outlines)')
+
+    return ap.parse_args()')')')
 
     return ap.parse_args()
 
@@ -476,4 +501,5 @@ if __name__ == '__main__':
         norm_width_mode=args.normalize_width,
         norm_width_target=args.normalize_target,
         norm_width_percentile=args.normalize_percentile,
+        fill_lines=args.fill_lines,
     )
