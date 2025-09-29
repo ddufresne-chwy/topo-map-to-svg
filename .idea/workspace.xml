@@ -4,7 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="33abd8ff-b1bb-4572-837f-0963215db1c5" name="Changes" comment="add options to control thinning to avoid contour breaks">
+    <list default="true" id="33abd8ff-b1bb-4572-837f-0963215db1c5" name="Changes" comment="added option to pre-normalize contour thickness before attempting thinning.">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/topo_to_svg.py" beforeDir="false" afterPath="$PROJECT_DIR$/topo_to_svg.py" afterDir="false" />
     </list>
@@ -119,7 +119,15 @@
       <option name="project" value="LOCAL" />
       <updated>1759103468724</updated>
     </task>
-    <option name="localTasksCounter" value="10" />
+    <task id="LOCAL-00010" summary="added option to pre-normalize contour thickness before attempting thinning.">
+      <option name="closed" value="true" />
+      <created>1759104608409</created>
+      <option name="number" value="00010" />
+      <option name="presentableId" value="LOCAL-00010" />
+      <option name="project" value="LOCAL" />
+      <updated>1759104608409</updated>
+    </task>
+    <option name="localTasksCounter" value="11" />
     <servers />
   </component>
   <component name="VcsManagerConfiguration">
@@ -130,6 +138,7 @@
     <MESSAGE value="fixed --single-line feature to avoid creating breaks in contours." />
     <MESSAGE value="syntax fix" />
     <MESSAGE value="add options to control thinning to avoid contour breaks" />
-    <option name="LAST_COMMIT_MESSAGE" value="add options to control thinning to avoid contour breaks" />
+    <MESSAGE value="added option to pre-normalize contour thickness before attempting thinning." />
+    <option name="LAST_COMMIT_MESSAGE" value="added option to pre-normalize contour thickness before attempting thinning." />
   </component>
 </project>

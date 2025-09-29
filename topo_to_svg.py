@@ -358,7 +358,7 @@ def process(in_path: Path,
     ensure_dir(out_dir / 'peaks')
     ensure_dir(out_dir / 'contours')
 
-        bin_img = isolate_lines(img, hsv_low, hsv_high, close_k, close_iters)
+    bin_img = isolate_lines(img, hsv_low, hsv_high, close_k, close_iters)
 
     # Optional: thin to 1-pixel centerlines so each contour traces as a single path
     if single_line:
@@ -375,7 +375,6 @@ def process(in_path: Path,
         # Final skeleton
         bin_img = skeletonize_image(bin_img, method=single_line_method, dilate_iters=0)
         # Bridge nearby endpoints to avoid small breaks in contours
-        bin_img = bridge_skeleton(bin_img, max_dist=single_line_bridge) to avoid small breaks in contours
         bin_img = bridge_skeleton(bin_img, max_dist=single_line_bridge)
 
     contours, hierarchy, kept = find_contour_forest(bin_img, min_perimeter=min_perimeter, dp_eps=dp_eps)
@@ -447,7 +446,7 @@ def parse_args():
     ap.add_argument('--normalize-target', type=int, default=0, help='Override target half-width (in px) for normalization (0 = auto)')
     ap.add_argument('--normalize-percentile', type=float, default=95.0, help='Percentile for thickest/thinnest selection (e.g., 95 or 5)')
 
-    return ap.parse_args()')')')
+    return ap.parse_args()
 
     return ap.parse_args()
 
