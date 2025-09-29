@@ -191,6 +191,35 @@ def bridge_skeleton(skel: np.ndarray, max_dist: int) -> np.ndarray:
 
 # -----------------------------
 # Core processing
+
+def compute_target_radius(bin_img: np.ndarray, skel: np.ndarray, mode: str, target: int, percentile: float) -> int:
+    # Distance in pixels from foreground to background
+    dist = cv2.distanceTransform((bin_img>0).astype(np.uint8), cv2.DIST_L2, 3)
+    vals = dist[skel>0]
+    if vals.size == 0:
+        return max(1, target if target>0 else 1)
+    if target > 0:
+        r = target
+    else:
+        if mode == 'thickest':
+            r = np.percentile(vals, percentile)
+        elif mode == 'thinnest':
+            r = np.percentile(vals, 100.0 - percentile)
+        else:  # average
+            r = np.median(vals)
+    return max(1, int(round(float(r))))
+
+def normalize_width_from_skeleton(bin_img: np.ndarray, mode: str, target: int, percentile: float, skel_method: str, pre_dilate: int) -> np.ndarray:
+    # Create a skeleton only to measure radii; use the same method user selected
+    skel = skeletonize_image(bin_img, method=skel_method, dilate_iters=pre_dilate)
+    r = compute_target_radius(bin_img, skel, mode, target, percentile)
+    # Reconstruct a uniform-thickness blob by dilating the skeleton with a disk of radius r
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2*r+1, 2*r+1))
+    uniform = cv2.dilate(skel, k, iterations=1)
+    return uniform
+
+# -----------------------------
+# Core processing
 # -----------------------------
 
 def isolate_lines(img_bgr: np.ndarray,
@@ -314,7 +343,10 @@ def process(in_path: Path,
             single_line: bool,
             single_line_method: str,
             single_line_dilate: int,
-            single_line_bridge: int):
+            single_line_bridge: int,
+            norm_width_mode: str,
+            norm_width_target: int,
+            norm_width_percentile: float):
 
     img = cv2.imread(str(in_path), cv2.IMREAD_COLOR)
     if img is None:
@@ -330,8 +362,20 @@ def process(in_path: Path,
 
     # Optional: thin to 1-pixel centerlines so each contour traces as a single path
     if single_line:
-        bin_img = skeletonize_image(bin_img, method=single_line_method, dilate_iters=single_line_dilate)
+        # Optional normalization to a target thickness before skeletonizing
+        if norm_width_mode != 'none':
+            bin_img = normalize_width_from_skeleton(
+                bin_img,
+                mode=norm_width_mode,
+                target=norm_width_target,
+                percentile=norm_width_percentile,
+                skel_method=single_line_method,
+                pre_dilate=single_line_dilate,
+            )
+        # Final skeleton
+        bin_img = skeletonize_image(bin_img, method=single_line_method, dilate_iters=0)
         # Bridge nearby endpoints to avoid small breaks in contours
+        bin_img = bridge_skeleton(bin_img, max_dist=single_line_bridge) to avoid small breaks in contours
         bin_img = bridge_skeleton(bin_img, max_dist=single_line_bridge)
 
     contours, hierarchy, kept = find_contour_forest(bin_img, min_perimeter=min_perimeter, dp_eps=dp_eps)
@@ -396,7 +440,14 @@ def parse_args():
     ap.add_argument('--single-line', action='store_true', help='Skeletonize raster lines to 1‑pixel centerlines (one path per contour)')
     ap.add_argument('--single-line-method', choices=['auto','ximgproc','zhang','guohall','skimage','cv'], default='auto', help='Algorithm for single-line skeletonization')
     ap.add_argument('--single-line-dilate', type=int, default=1, help='3x3 dilation iterations before skeletonizing (bridges tiny gaps)')
-    ap.add_argument('--single-line-bridge', type=int, default=0, help='Connect skeleton endpoints within this many pixels (0 = off)')')')
+    ap.add_argument('--single-line-bridge', type=int, default=0, help='Connect skeleton endpoints within this many pixels (0 = off)')
+
+    # NEW: pre-normalize thickness before thinning
+    ap.add_argument('--normalize-width', choices=['none','thickest','thinnest','average'], default='none', help='Normalize raster line thickness before thinning')
+    ap.add_argument('--normalize-target', type=int, default=0, help='Override target half-width (in px) for normalization (0 = auto)')
+    ap.add_argument('--normalize-percentile', type=float, default=95.0, help='Percentile for thickest/thinnest selection (e.g., 95 or 5)')
+
+    return ap.parse_args()')')')
 
     return ap.parse_args()
 
@@ -423,4 +474,7 @@ if __name__ == '__main__':
         single_line_method=args.single_line_method,
         single_line_dilate=args.single_line_dilate,
         single_line_bridge=args.single_line_bridge,
+        norm_width_mode=args.normalize_width,
+        norm_width_target=args.normalize_target,
+        norm_width_percentile=args.normalize_percentile,
     )

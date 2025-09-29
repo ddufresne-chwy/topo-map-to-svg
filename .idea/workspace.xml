@@ -4,7 +4,8 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="33abd8ff-b1bb-4572-837f-0963215db1c5" name="Changes" comment="fixed --single-line feature to avoid creating breaks in contours.">
+    <list default="true" id="33abd8ff-b1bb-4572-837f-0963215db1c5" name="Changes" comment="add options to control thinning to avoid contour breaks">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/topo_to_svg.py" beforeDir="false" afterPath="$PROJECT_DIR$/topo_to_svg.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -102,7 +103,23 @@
       <option name="project" value="LOCAL" />
       <updated>1759102807909</updated>
     </task>
-    <option name="localTasksCounter" value="8" />
+    <task id="LOCAL-00008" summary="syntax fix">
+      <option name="closed" value="true" />
+      <created>1759102920091</created>
+      <option name="number" value="00008" />
+      <option name="presentableId" value="LOCAL-00008" />
+      <option name="project" value="LOCAL" />
+      <updated>1759102920091</updated>
+    </task>
+    <task id="LOCAL-00009" summary="add options to control thinning to avoid contour breaks">
+      <option name="closed" value="true" />
+      <created>1759103468723</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1759103468724</updated>
+    </task>
+    <option name="localTasksCounter" value="10" />
     <servers />
   </component>
   <component name="VcsManagerConfiguration">
@@ -111,6 +128,8 @@
     <MESSAGE value="feature to force contour line width to 1 pixel" />
     <MESSAGE value="added option to force countours with inner and outer walls to single center wall in SVG" />
     <MESSAGE value="fixed --single-line feature to avoid creating breaks in contours." />
-    <option name="LAST_COMMIT_MESSAGE" value="fixed --single-line feature to avoid creating breaks in contours." />
+    <MESSAGE value="syntax fix" />
+    <MESSAGE value="add options to control thinning to avoid contour breaks" />
+    <option name="LAST_COMMIT_MESSAGE" value="add options to control thinning to avoid contour breaks" />
   </component>
 </project>
