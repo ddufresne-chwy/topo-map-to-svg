@@ -4,7 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="33abd8ff-b1bb-4572-837f-0963215db1c5" name="Changes" comment="added option to pre-normalize contour thickness before attempting thinning.">
+    <list default="true" id="33abd8ff-b1bb-4572-837f-0963215db1c5" name="Changes" comment="added option to fill spaces between contour walls rather than thinning them.">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/topo_to_svg.py" beforeDir="false" afterPath="$PROJECT_DIR$/topo_to_svg.py" afterDir="false" />
     </list>
@@ -127,7 +127,23 @@
       <option name="project" value="LOCAL" />
       <updated>1759104608409</updated>
     </task>
-    <option name="localTasksCounter" value="11" />
+    <task id="LOCAL-00011" summary="tried additional options to manage breaks">
+      <option name="closed" value="true" />
+      <created>1759107966450</created>
+      <option name="number" value="00011" />
+      <option name="presentableId" value="LOCAL-00011" />
+      <option name="project" value="LOCAL" />
+      <updated>1759107966450</updated>
+    </task>
+    <task id="LOCAL-00012" summary="added option to fill spaces between contour walls rather than thinning them.">
+      <option name="closed" value="true" />
+      <created>1759108000762</created>
+      <option name="number" value="00012" />
+      <option name="presentableId" value="LOCAL-00012" />
+      <option name="project" value="LOCAL" />
+      <updated>1759108000762</updated>
+    </task>
+    <option name="localTasksCounter" value="13" />
     <servers />
   </component>
   <component name="VcsManagerConfiguration">
@@ -139,6 +155,8 @@
     <MESSAGE value="syntax fix" />
     <MESSAGE value="add options to control thinning to avoid contour breaks" />
     <MESSAGE value="added option to pre-normalize contour thickness before attempting thinning." />
-    <option name="LAST_COMMIT_MESSAGE" value="added option to pre-normalize contour thickness before attempting thinning." />
+    <MESSAGE value="tried additional options to manage breaks" />
+    <MESSAGE value="added option to fill spaces between contour walls rather than thinning them." />
+    <option name="LAST_COMMIT_MESSAGE" value="added option to fill spaces between contour walls rather than thinning them." />
   </component>
 </project>
