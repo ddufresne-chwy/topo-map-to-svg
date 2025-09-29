@@ -159,7 +159,10 @@ def find_contour_forest(bin_img: np.ndarray,
 
 
 def build_trees(contours: List[np.ndarray]) -> Dict[int, Dict]:
-    """Group contours into trees using bbox shortlist + point-in-polygon confirmation."""
+    """Group contours by geometric containment using bbox shortlist + point-in-polygon.
+    Note: For maps like your sample, many low-elevation rings enclose the whole region,
+    so peak separation by nesting can degrade to a chain. Prefer spatial clustering for peaks.
+    """
     n = len(contours)
     if n == 0:
         return {}
@@ -169,22 +172,30 @@ def build_trees(contours: List[np.ndarray]) -> Dict[int, Dict]:
 
     parent = [-1] * n
     for i in range(n):
-        xi, yi, wi, hi = bboxes[i]
-        bx0, by0, bx1, by1 = xi, yi, xi + wi, yi + hi
+        # centroid as test point
+        M = cv2.moments(contours[i])
+        if M['m00'] == 0:
+            cx, cy = float(contours[i][0][0][0]), float(contours[i][0][0][1])
+        else:
+            cx, cy = float(M['m10']/M['m00']), float(M['m01']/M['m00'])
         best = -1
         best_area = float('inf')
-        # shortlist by bbox containment
+        xi, yi, wi, hi = bboxes[i]
+        bx0, by0, bx1, by1 = xi, yi, xi + wi, yi + hi
         for j in range(n):
             if i == j:
                 continue
             xj, yj, wj, hj = bboxes[j]
-            if xj <= bx0 and yj <= by0 and xj + wj >= bx1 and yj + hj >= by1:
-                # confirm by point-in-polygon using a vertex of child
-                pt = tuple(contours[i][0][0])  # (x,y)
-                inside = cv2.pointPolygonTest(contours[j], pt, False) >= 0
-                if inside and areas[j] < best_area:
-                    best_area = areas[j]
-                    best = j
+            # must be strictly larger and bbox contain
+            if areas[j] <= areas[i]:
+                continue
+            if not (xj <= bx0 and yj <= by0 and xj + wj >= bx1 and yj + hj >= by1):
+                continue
+            # precise containment by point-in-polygon on centroid
+            inside = cv2.pointPolygonTest(contours[j], (cx, cy), False) >= 0
+            if inside and areas[j] < best_area:
+                best_area = areas[j]
+                best = j
         parent[i] = best
 
     children: List[List[int]] = [[] for _ in range(n)]
@@ -206,7 +217,7 @@ def build_trees(contours: List[np.ndarray]) -> Dict[int, Dict]:
             depths[d].append(idx)
             for ch in children[idx]:
                 q.append((ch, d + 1))
-        trees[tidx] = {"root": r, "nodes": nodes, "depths": depths}
+        trees[tidx] = {"root": r, "nodes": nodes, "depths": depths, "children": children}
     return trees
 
 
@@ -340,177 +351,66 @@ def normalize_width_from_skeleton(bin_img: np.ndarray, mode: str, target: int,
 # Orchestration
 # -----------------------------
 
-def process(in_path: Path,
-            out_dir: Path,
-            hsv_low: Optional[Tuple[int, int, int]],
-            hsv_high: Optional[Tuple[int, int, int]],
-            min_perimeter: float,
-            close_k: int,
-            close_iters: int,
-            dp_eps: float,
-            stroke: float,
-            thin: bool,
-            single_line: bool,
-            single_line_method: str,
-            single_line_dilate: int,
-            single_line_bridge: int,
-            norm_width_mode: str,
-            norm_width_target: int,
-            norm_width_percentile: float,
-            fill_lines: bool) -> None:
-
-    img = cv2.imread(str(in_path), cv2.IMREAD_COLOR)
-    if img is None:
-        raise FileNotFoundError(f"Could not read image: {in_path}")
-
-    h, w = img.shape[:2]
-    ensure_dir(out_dir)
-    ensure_dir(out_dir / 'layers')
-    ensure_dir(out_dir / 'peaks')
-    ensure_dir(out_dir / 'contours')
-
-    bin_img = isolate_lines(img, hsv_low, hsv_high, close_k, close_iters)
-
-    # Optional: normalize thickness prior to thinning
-    if single_line and norm_width_mode != 'none':
-        bin_img = normalize_width_from_skeleton(
-            bin_img,
-            mode=norm_width_mode,
-            target=norm_width_target,
-            percentile=norm_width_percentile,
-            skel_method=single_line_method,
-            pre_dilate=single_line_dilate,
-        )
-
-    # Optional: skeletonize to single-pixel centerlines
-    if single_line:
-        bin_img = skeletonize_image(bin_img, method=single_line_method, dilate_iters=0)
-        bin_img = bridge_skeleton(bin_img, max_dist=single_line_bridge)
-
-    contours, _ = find_contour_forest(bin_img, min_perimeter=min_perimeter, dp_eps=dp_eps)
-    if len(contours) == 0:
-        logging.warning("No contours found above min_perimeter. Try lowering --min-perimeter or adjusting the mask.")
-        return
-
-    trees = build_trees(contours)
-
-    # Build mapping: contour index -> (peak_id, level_depth, local_seq)
-    idx_info: Dict[int, Tuple[int, int, int]] = {}
-    for t_id, tree in trees.items():
-        for depth, idxs in sorted(tree['depths'].items()):
-            for local_seq, idx in enumerate(idxs):
-                idx_info[idx] = (t_id, depth, local_seq)
-
-    # per-contour SVGs (filenames include peak/level/seq)
-    for i, cnt in enumerate(contours):
-        pts = contour_to_points(cnt)
-        peak_id, level_depth, local_seq = idx_info.get(i, (-1, -1, i))
-        fn = out_dir / 'contours' / f'contour{local_seq:03d}_level{level_depth:03d}_peak{peak_id:03d}.svg'
-        to_svg([pts], (w, h), stroke, fn, thin, fill_lines)
-
-    # global per-level & per-peak
-    global_levels: Dict[int, List[List[Point]]] = defaultdict(list)
-    for t_id, tree in trees.items():
-        peak_dir = out_dir / 'peaks' / f'peak_{t_id:03d}'
-        ensure_dir(peak_dir)
-        level_paths: Dict[int, List[List[Point]]] = defaultdict(list)
-        for depth, idxs in tree['depths'].items():
-            for idx in idxs:
-                level_paths[depth].append(contour_to_points(contours[idx]))
-                global_levels[depth].append(contour_to_points(contours[idx]))
-        # per-level for this peak
-        for depth, paths in sorted(level_paths.items()):
-            to_svg(paths, (w, h), stroke, peak_dir / f'level_{depth:02d}.svg', thin, fill_lines)
-        # combined for this peak
-        all_paths = [p for ps in level_paths.values() for p in ps]
-        to_svg(all_paths, (w, h), stroke, peak_dir / 'all_levels.svg', thin, fill_lines)
-
-    # global per-level
-    for depth, paths in sorted(global_levels.items()):
-        to_svg(paths, (w, h), stroke, out_dir / 'layers' / f'level_{depth:02d}.svg', thin, fill_lines)
-
-    # overview
-    overview = [p for ps in global_levels.values() for p in ps]
-    to_svg(overview, (w, h), stroke, out_dir / 'overview_all_layers.svg', thin, fill_lines)
-
-    logging.info("✅ Done. Contours: %d | Peaks: %d | Levels: %d", len(contours), len(trees), len(global_levels))
-    logging.info("Output directory: %s", out_dir)
+def spatial_cluster(centroids: List[Tuple[float, float]], eps: float) -> Tuple[List[int], int]:
+    """Simple DBSCAN-like clustering without extra deps (single-link eps)."""
+    pts = np.array(centroids, dtype=np.float32)
+    n = len(pts)
+    if n == 0:
+        return [], 0
+    # Build adjacency by eps
+    adj = [[] for _ in range(n)]
+    for i in range(n):
+        for j in range(i + 1, n):
+            if (pts[i] - pts[j]) @ (pts[i] - pts[j]) <= eps * eps:
+                adj[i].append(j)
+                adj[j].append(i)
+    # BFS components
+    labels = [-1] * n
+    cid = 0
+    from collections import deque as _dq
+    for i in range(n):
+        if labels[i] != -1:
+            continue
+        q = _dq([i])
+        labels[i] = cid
+        while q:
+            u = q.popleft()
+            for v in adj[u]:
+                if labels[v] == -1:
+                    labels[v] = cid
+                    q.append(v)
+        cid += 1
+    return labels, cid
 
 
-# -----------------------------
-# CLI
-# -----------------------------
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Convert a topo map image into per-elevation-layer SVGs.")
-
-    # Input & preprocessing
-    parser.add_argument('input', type=Path, help='Input image (png/jpg/tif)')
-    parser.add_argument('--out', type=Path, default=Path('out'), help='Output directory')
-    parser.add_argument('--hsv-low', type=int, nargs=3, metavar=('H', 'S', 'V'), help='Lower HSV bound for contour color mask')
-    parser.add_argument('--hsv-high', type=int, nargs=3, metavar=('H', 'S', 'V'), help='Upper HSV bound for contour color mask')
-    parser.add_argument('--close-k', type=int, default=3, help='Structuring element size for closing (pixels)')
-    parser.add_argument('--close-iters', type=int, default=1, help='Iterations for morphological closing')
-
-    # Contour filtering / simplification
-    parser.add_argument('--min-perimeter', type=float, default=100.0, help='Ignore tiny contours below this perimeter (pixels)')
-    parser.add_argument('--dp-eps', type=float, default=1.5, help='Douglas–Peucker epsilon. If >1 treat as % of perimeter; if <=1 absolute pixels')
-
-    # Output styling
-    parser.add_argument('--stroke', type=float, default=1.0, help='SVG stroke width (px) for stroked output')
-    parser.add_argument('--thin', action='store_true', help='Force stroked SVG contours to be exactly 1px wide')
-    parser.add_argument('--fill-lines', action='store_true', help='Render filled bands with even-odd fill (no stroked outlines)')
-
-    # Single-line skeletonization options
-    parser.add_argument('--single-line', action='store_true', help='Skeletonize raster lines to 1‑pixel centerlines (one path per contour)')
-    parser.add_argument('--single-line-method', choices=['auto', 'ximgproc', 'zhang', 'guohall', 'skimage', 'cv'], default='auto', help='Algorithm for single-line skeletonization')
-    parser.add_argument('--single-line-dilate', type=int, default=1, help='3x3 dilation iterations before skeletonizing (bridges tiny gaps)')
-    parser.add_argument('--single-line-bridge', type=int, default=0, help='Connect skeleton endpoints within this many pixels after thinning (0=off)')
-
-    # Thickness normalization (pre-thin)
-    parser.add_argument('--normalize-width', choices=['none', 'thickest', 'thinnest', 'average'], default='none', help='Normalize raster line thickness before thinning')
-    parser.add_argument('--normalize-target', type=int, default=0, help='Override target half-width (px) for normalization (0=auto)')
-    parser.add_argument('--normalize-percentile', type=float, default=95.0, help='Percentile for thickest/thinnest selection (e.g., 95 or 5)')
-
-    # Logging
-    parser.add_argument('-v', '--verbose', action='count', default=0, help='Increase verbosity (-v, -vv)')
-
-    return parser.parse_args()
+def compute_layers_cluster(labels: List[int], areas: List[float], target_layers: int) -> Tuple[List[int], List[int]]:
+    """Return (global_layer, local_seq_within_peak) per contour index using per‑peak area ranks.
+       If target_layers>0, map local ranks to [0..target_layers-1] by linear scaling.
+    """
+    n = len(labels)
+    global_layer = [0] * n
+    local_seq = [0] * n
+    labels_arr = np.array(labels)
+    for peak_id in sorted(set(labels)):
+        idxs = np.where(labels_arr == peak_id)[0].tolist()
+        # Sort outer→inner by area (desc)
+        idxs_sorted = sorted(idxs, key=lambda i: areas[i], reverse=True)
+        max_rank = max(0, len(idxs_sorted) - 1)
+        for rank, i in enumerate(idxs_sorted):
+            local_seq[i] = rank
+            if target_layers > 0 and max_rank > 0:
+                g = int(round(rank * (target_layers - 1) / max_rank))
+            else:
+                g = rank
+            global_layer[i] = g
+    return global_layer, local_seq
 
 
-def main() -> None:
-    args = parse_args()
-
-    # Logging setup
-    lvl = logging.WARNING
-    if args.verbose == 1:
-        lvl = logging.INFO
-    elif args.verbose >= 2:
-        lvl = logging.DEBUG
-    logging.basicConfig(level=lvl, format='[%(levelname)s] %(message)s')
-
-    # Validate some ranges
-    if args.dp_eps <= 0:
-        logging.info("Adjusting --dp-eps to 0.5 minimum")
-        args.dp_eps = 0.5
-    if not (0.0 <= args.normalize_percentile <= 100.0):
-        raise SystemExit("--normalize-percentile must be within [0,100]")
-    if args.normalize_target < 0:
-        raise SystemExit("--normalize-target must be >= 0")
-
-    # Warn on redundant/ignored combos
-    if args.fill_lines and args.single_line:
-        logging.info("--fill-lines requested with --single-line; output will be filled bands, single-line thinning mostly irrelevant for visual result.")
-
-    hsv_low = tuple(args.hsv_low) if args.hsv_low else None
-    hsv_high = tuple(args.hsv_high) if args.hsv_high else None
-
-    process(
+def process(
         in_path=args.input,
         out_dir=args.out,
-        hsv_low=hsv_low,
-        hsv_high=hsv_high,
+        hsv_low=tuple(args.hsv_low) if args.hsv_low else None,
+        hsv_high=tuple(args.hsv_high) if args.hsv_high else None,
         min_perimeter=args.min_perimeter,
         close_k=args.close_k,
         close_iters=args.close_iters,
@@ -525,6 +425,11 @@ def main() -> None:
         norm_width_target=args.normalize_target,
         norm_width_percentile=args.normalize_percentile,
         fill_lines=args.fill_lines,
+        remove_border=args.remove_border,
+        max_area_frac=args.max_area_frac,
+        peak_mode=args.peak_mode,
+        cluster_eps=args.cluster_eps,
+        target_layers=args.target_layers,
     )
 
 

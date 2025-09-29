@@ -4,7 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="33abd8ff-b1bb-4572-837f-0963215db1c5" name="Changes" comment="added option to fill spaces between contour walls rather than thinning them.">
+    <list default="true" id="33abd8ff-b1bb-4572-837f-0963215db1c5" name="Changes" comment="changed file naming convention to show contour number, level number, and then peak number.">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/topo_to_svg.py" beforeDir="false" afterPath="$PROJECT_DIR$/topo_to_svg.py" afterDir="false" />
     </list>
@@ -143,7 +143,15 @@
       <option name="project" value="LOCAL" />
       <updated>1759108000762</updated>
     </task>
-    <option name="localTasksCounter" value="13" />
+    <task id="LOCAL-00013" summary="changed file naming convention to show contour number, level number, and then peak number.">
+      <option name="closed" value="true" />
+      <created>1759179173091</created>
+      <option name="number" value="00013" />
+      <option name="presentableId" value="LOCAL-00013" />
+      <option name="project" value="LOCAL" />
+      <updated>1759179173091</updated>
+    </task>
+    <option name="localTasksCounter" value="14" />
     <servers />
   </component>
   <component name="VcsManagerConfiguration">
@@ -157,6 +165,7 @@
     <MESSAGE value="added option to pre-normalize contour thickness before attempting thinning." />
     <MESSAGE value="tried additional options to manage breaks" />
     <MESSAGE value="added option to fill spaces between contour walls rather than thinning them." />
-    <option name="LAST_COMMIT_MESSAGE" value="added option to fill spaces between contour walls rather than thinning them." />
+    <MESSAGE value="changed file naming convention to show contour number, level number, and then peak number." />
+    <option name="LAST_COMMIT_MESSAGE" value="changed file naming convention to show contour number, level number, and then peak number." />
   </component>
 </project>
